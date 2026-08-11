@@ -233,7 +233,7 @@
       <div class="actionbar">
         <button class="primary" id="btnTidy">정리</button>
         <button id="btnTable">표</button>
-        <button id="btnReplace">치환</button>
+        <button id="btnReplace">바꾸기</button>
         <button id="btnCopy">복사</button>
         <button id="btnUndo" disabled>되돌리기</button>
       </div>
@@ -297,7 +297,7 @@
 <!-- 일괄치환 -->
 <div class="overlay" id="replaceOverlay">
   <div class="modal" style="width:min(560px,100%)">
-    <div class="modal-head"><h2>일괄치환</h2><button class="x" data-close="replaceOverlay">닫기</button></div>
+    <div class="modal-head"><h2>바꾸기</h2><button class="x" data-close="replaceOverlay">닫기</button></div>
     <div class="modal-body">
       <div class="rule-row">
         <input type="text" id="repFind" placeholder="찾기">
@@ -306,16 +306,16 @@
       </div>
       <label style="display:flex;align-items:center;gap:8px;font-size:13.5px;margin-top:12px;cursor:pointer">
         <input type="checkbox" id="repSave">
-        <span>이 규칙을 설정에 저장해, 이후 "정리"할 때마다 항상 자동 치환</span>
+        <span>자동 바꾸기 규칙으로 저장 — 이후 "정리"할 때마다 항상 적용</span>
       </label>
       <div class="set-note">
-        치환은 현재 메모 전체에 즉시 적용되고, 되돌리기 한 번으로 복구됩니다.
-        저장된 자동 치환 규칙은 "정리" 실행 시 적용되며 코드블록 안은 건드리지 않습니다.
+        현재 메모 전체에 즉시 적용되고, 되돌리기 한 번으로 복구됩니다.
+        저장된 자동 바꾸기 규칙은 "정리" 실행 시 적용되며 코드블록 안은 건드리지 않습니다.
       </div>
     </div>
     <div class="modal-foot">
       <button class="btn btn-ghost" data-close="replaceOverlay">취소</button>
-      <button class="btn btn-primary" id="btnReplaceGo">치환 실행</button>
+      <button class="btn btn-primary" id="btnReplaceGo">모두 바꾸기</button>
     </div>
   </div>
 </div>
@@ -397,7 +397,7 @@
         </select>
       </div>
       <div style="margin-top:14px">
-        <div class="lbl" style="font-size:14px;font-weight:700">사용자 치환 규칙</div>
+        <div class="lbl" style="font-size:14px;font-weight:700">자동 바꾸기 규칙</div>
         <div class="sub" style="font-size:12px;color:var(--sub);margin:2px 0 8px">
           위에서부터 순서대로 적용. 바꾸기에 \n을 쓰면 줄바꿈. 코드블록 안은 건드리지 않습니다.
         </div>
@@ -1473,7 +1473,7 @@ $('btnReplaceGo').addEventListener('click', ()=>{
   persist();
   $('replaceOverlay').classList.remove('open');
   openNote(n.id);
-  toast(count + '건 치환 완료' + (saved ? ' · 자동 치환 규칙으로 저장됨' : ''));
+  toast(count + '곳을 바꿨습니다' + (saved ? ' · 자동 바꾸기 규칙으로 저장됨' : ''));
 });
 
 /* ---------------- 표 도구 ---------------- */
