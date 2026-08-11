@@ -1147,6 +1147,9 @@ function getNote(id){ return notes.find(n=>n.id===id); }
 function fmtDate(ts){
   const d = new Date(ts);
   const p = (x)=>String(x).padStart(2,'0');
+  const now = new Date();
+  const isToday = d.getFullYear()===now.getFullYear() && d.getMonth()===now.getMonth() && d.getDate()===now.getDate();
+  if(isToday) return `오늘 ${p(d.getHours())}:${p(d.getMinutes())}`;
   return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
 }
 function renderList(){
