@@ -60,7 +60,7 @@
   .back{display:none; font-weight:700; color:var(--accent); padding:6px 8px 6px 0}
   .title-input{flex:1; font-size:20px; font-weight:800; letter-spacing:-.3px; padding:4px 0}
   .title-input::placeholder{color:#c2c2c6}
-  .icon-btn{padding:7px 10px; border-radius:8px; color:var(--sub); font-size:13px; font-weight:700}
+  .icon-btn{padding:7px 10px; border-radius:8px; color:var(--sub); font-size:13px; font-weight:700; white-space:nowrap}
   .icon-btn:hover{background:var(--bg); color:var(--ink)}
   .editor-wrap{flex:1; overflow:hidden; display:flex; flex-direction:column}
   .editor{flex:1; width:100%; resize:none; padding:10px 18px 18px; font-size:15px; line-height:1.7;
@@ -155,6 +155,24 @@
     body.mobile-editor .side{display:none}
     body.mobile-editor .main{display:flex}
     .back{display:block}
+
+    /* iOS 노치·홈바 세이프 에어리어 */
+    .brand{padding-top:calc(18px + env(safe-area-inset-top))}
+    .ed-head{padding-top:calc(12px + env(safe-area-inset-top))}
+    .actionbar{padding-bottom:env(safe-area-inset-bottom)}
+
+    /* 에디터 헤더: 1행 버튼(목록·고정·삭제), 2행 제목 — 버튼 세로 꺾임 방지 */
+    .ed-head{flex-wrap:wrap; row-gap:2px}
+    .back{order:0}
+    .icon-btn{order:1}
+    #btnDelete{margin-left:auto}
+    .title-input{order:2; flex:1 1 100%; font-size:18px; padding:2px 0 4px}
+
+    /* iOS는 16px 미만 입력칸 포커스 시 강제 확대 → 16px 이상으로 고정 */
+    .editor{font-size:16px}
+    .search input, .meta-row input, .meta-row select,
+    .paste-fallback textarea, .rule-row input[type=text], .set-row select{font-size:16px}
+    .meta-row select{max-width:44%}
   }
 </style>
 </head>
