@@ -168,6 +168,8 @@
     #btnDelete{margin-left:auto}
     .title-input{order:2; flex:1 1 100%; font-size:18px; padding:2px 0 4px}
 
+    .actionbar button{font-size:12.5px; padding:13px 2px}
+
     /* iOS는 16px 미만 입력칸 포커스 시 강제 확대 → 16px 이상으로 고정 */
     .editor{font-size:16px}
     .search input, .meta-row input, .meta-row select,
@@ -232,6 +234,7 @@
       </div>
       <div class="actionbar">
         <button class="primary" id="btnTidy">정리</button>
+        <button id="btnWizard">마법사</button>
         <button id="btnTable">표</button>
         <button id="btnReplace">바꾸기</button>
         <button id="btnCopy">복사</button>
@@ -320,6 +323,26 @@
   </div>
 </div>
 
+<!-- AI 마법사 -->
+<div class="overlay" id="wizardOverlay">
+  <div class="modal" style="width:min(600px,100%)">
+    <div class="modal-head"><h2>마법사</h2><button class="x" data-close="wizardOverlay">닫기</button></div>
+    <div class="modal-body">
+      <textarea id="wizInput" style="width:100%;height:90px;background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:12px;resize:vertical;font-size:14px"
+        placeholder="말로 지시하세요. 예:&#10;소제목 위 공백은 2줄, 아래는 1줄로 해줘&#10;- 앞 스페이스는 2칸으로 해줘&#10;'마소'를 '마이크로소프트'로 바꿔줘"></textarea>
+      <div id="wizResult" style="margin-top:10px"></div>
+      <div class="set-note">
+        규칙으로 해석되는 명령(여백·들여쓰기·글머리·강조·구분선·출처·바꾸기)은 즉시 처리됩니다.
+        "더 간결하게 써줘" 같은 자유 편집 명령은 AI 연결(2차 개발 예정)이 필요합니다.
+      </div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn btn-ghost" data-close="wizardOverlay">취소</button>
+      <button class="btn btn-primary" id="btnWizardGo">해석하고 적용</button>
+    </div>
+  </div>
+</div>
+
 <!-- Settings -->
 <div class="overlay" id="settingsOverlay">
   <div class="modal" style="width:min(560px,100%)">
@@ -395,6 +418,22 @@
           <option value="on">켬</option>
           <option value="off">끔</option>
         </select>
+      </div>
+      <div style="margin-top:14px">
+        <div class="lbl" style="font-size:14px;font-weight:700">AI 마법사 연결 (자유 편집)</div>
+        <div class="sub" style="font-size:12px;color:var(--sub);margin:2px 0 8px">
+          Anthropic API 키를 넣으면 "더 간결하게 써줘" 같은 자유 편집 명령을 마법사가 처리합니다.
+          키는 이 기기에만 저장되고, 호출 비용은 키 소유자에게 청구됩니다.
+        </div>
+        <div class="rule-row">
+          <input type="password" id="setApiKey" placeholder="API 키 (Google AI 또는 Anthropic)">
+          <select id="setAiModel" style="background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:7px 9px;font-size:12.5px;color:var(--ink)">
+            <option value="gemini-2.5-flash-lite">Gemini Flash-Lite (최저비용)</option>
+            <option value="gemini-2.5-flash">Gemini Flash</option>
+            <option value="claude-haiku-4-5-20251001">Claude Haiku</option>
+            <option value="claude-sonnet-5">Claude Sonnet (품질)</option>
+          </select>
+        </div>
       </div>
       <div style="margin-top:14px">
         <div class="lbl" style="font-size:14px;font-weight:700">자동 바꾸기 규칙</div>
@@ -817,12 +856,15 @@
     if (o.removeCitations) linesIn = stripCitations(linesIn, rep);
     const lines = expandDashLists(linesIn, o, rep);
     const out = [];
-    let skipBlanks = false; // 소제목 아래 여백 삽입 후 원본의 빈 줄은 건너뜀
+    let skipBlanks = false; // 소제목 아래 여백 삽입 후 원본의 빈 줄·여백 줄은 건너뜀
+    // 빈 줄 또는 투명 문자(ㅤ)로만 이루어진 여백 줄 판정
+    const isSpacer = (l) => l.replace(/[ㅤ\s]/g, '') === '';
     // 소제목 출력 + 여백 규칙 (위 2줄 · 아래 1줄, ㅤ 스페이서)
+    // 원본에 이미 있던 소제목 주변 여백 줄은 흡수해 두 배가 되지 않게 한다
     const emitHeading = (formatted) => {
       if (o.headingPad) {
         const ch = o.headingPadChar || 'ㅤ';
-        while (out.length && (out[out.length - 1].trim() === '' || out[out.length - 1] === ch)) out.pop();
+        while (out.length && isSpacer(out[out.length - 1])) out.pop();
         if (out.length) { for (let k = 0; k < (o.headingPadAbove ?? 2); k++) out.push(ch); }
         out.push(formatted);
         for (let k = 0; k < (o.headingPadBelow ?? 1); k++) out.push(ch);
@@ -862,7 +904,7 @@
       }
       if (o.tablesOnly) continue;
       if (skipBlanks) {
-        if (lines[i].trim() === '') continue;
+        if (isSpacer(lines[i])) continue;
         skipBlanks = false;
       }
       let line = lines[i];
@@ -1237,7 +1279,8 @@ async function copyText(text, doneMsg){
 /* ---------------- 정리 규칙 설정 ---------------- */
 const SET_KEY = 'simpletext.settings.v1';
 const DEFAULT_SETTINGS = { emphStyle:'quoteSingle', hrMode:'keep', headingMode:'strip', headingSymbol:'■', bulletChar:'-',
-  smartDashList:true, smartFillerHeading:true, customRules:[], headingPad:true, bulletIndent:2, removeCitations:true, _v:2 };
+  smartDashList:true, smartFillerHeading:true, customRules:[], headingPad:true, headingPadAbove:2, headingPadBelow:1,
+  bulletIndent:2, removeCitations:true, aiKey:'', aiModel:'gemini-2.5-flash-lite', _v:2 };
 let settings = loadSettings();
 function loadSettings(){
   let s = {};
@@ -1267,7 +1310,11 @@ function effOpts(preset){
   if(o.smartDashList) o.smartDashList = settings.smartDashList;
   if(o.smartFillerHeading) o.smartFillerHeading = settings.smartFillerHeading;
   if(o.stripEmphasis) o.customRules = settings.customRules.filter(r=>r.find);
-  if(o.stripHeadings || o.smartFillerHeading) o.headingPad = settings.headingPad;
+  if(o.stripHeadings || o.smartFillerHeading){
+    o.headingPad = settings.headingPad;
+    o.headingPadAbove = settings.headingPadAbove;
+    o.headingPadBelow = settings.headingPadBelow;
+  }
   if(o.bulletsToDot) o.bulletIndent = settings.bulletIndent;
   if(o.removeCitations) o.removeCitations = settings.removeCitations;
   return o;
@@ -1305,6 +1352,8 @@ function syncSettingsUI(){
   $('setHeadPad').value = settings.headingPad ? 'on' : 'off';
   $('setIndent').value = String(settings.bulletIndent);
   $('setCites').value = settings.removeCitations ? 'on' : 'off';
+  $('setApiKey').value = settings.aiKey || '';
+  $('setAiModel').value = settings.aiModel || 'gemini-2.5-flash-lite';
   renderRules();
 }
 $('btnSettings').addEventListener('click', ()=>{
@@ -1324,6 +1373,8 @@ $('btnAddRule').addEventListener('click', ()=>{
   settings.customRules.push({find:'', replace:'', regex:false});
   saveSettings(); renderRules();
 });
+$('setApiKey').addEventListener('input', e=>{ settings.aiKey = e.target.value.trim(); saveSettings(); });
+$('setAiModel').addEventListener('change', e=>{ settings.aiModel = e.target.value; saveSettings(); });
 
 /* ---------------- 정리 (프리셋 → 미리보기 → 적용) ---------------- */
 function renderPresets(){
@@ -1475,6 +1526,293 @@ $('btnReplaceGo').addEventListener('click', ()=>{
   openNote(n.id);
   toast(count + '곳을 바꿨습니다' + (saved ? ' · 자동 바꾸기 규칙으로 저장됨' : ''));
 });
+
+/* ---------------- AI 마법사 (1층: 규칙 명령 해석기) ---------------- */
+function parseWizard(cmd){
+  const actions = [];   // {label, apply}
+  const unknown = [];
+  const text = (cmd||'').trim();
+  if(!text) return {actions, unknown};
+  const headingCtx = /소제목|제목|헤딩|heading/i.test(text);
+  const clauses = text.split(/[\n.。]+/).map(s=>s.trim()).filter(Boolean);
+
+  for(const clause of clauses){
+    let matched = false;
+    let m;
+
+    // 1) 소제목 위/아래 여백 줄 수
+    if(headingCtx || /여백|공백|빈\s*줄/.test(clause)){
+      m = clause.match(/(?:위|앞).*?([0-9]+)\s*줄(?:씩)?\s*(?:으로|로)/) ||
+          clause.match(/(?:위|앞)[^0-9]{0,8}([0-9]+)\s*줄/);
+      if(m){
+        const n = Math.min(9, parseInt(m[1],10));
+        actions.push({ label:`소제목 위 여백 ${n}줄`, apply(){ settings.headingPad=true; settings.headingPadAbove=n; } });
+        matched = true;
+      }
+      m = clause.match(/(?:아래|밑).*?([0-9]+)\s*줄(?:씩)?\s*(?:으로|로)/) ||
+          clause.match(/(?:아래|밑)[^0-9]{0,8}([0-9]+)\s*줄/);
+      if(m){
+        const n = Math.min(9, parseInt(m[1],10));
+        actions.push({ label:`소제목 아래 여백 ${n}줄`, apply(){ settings.headingPad=true; settings.headingPadBelow=n; } });
+        matched = true;
+      }
+    }
+
+    // 2) 글머리 들여쓰기 칸 수
+    if(!matched && /스페이스|공백|들여쓰|칸/.test(clause) && /칸/.test(clause)){
+      m = clause.match(/([0-9]+)\s*칸\s*(?:으로|로|만)/);
+      if(!m){ const all=[...clause.matchAll(/([0-9]+)\s*칸/g)]; if(all.length) m = all[all.length-1]; }
+      if(m){
+        const n = Math.min(9, parseInt(m[1],10));
+        actions.push({ label:`글머리 들여쓰기 ${n}칸`, apply(){ settings.bulletIndent=n; } });
+        matched = true;
+      }
+    }
+    if(!matched && /들여쓰기|스페이스|공백/.test(clause) && /(없애|제거|빼)/.test(clause) && /칸|들여쓰기/.test(clause)){
+      actions.push({ label:'글머리 들여쓰기 없음', apply(){ settings.bulletIndent=0; } });
+      matched = true;
+    }
+
+    // 3) 글머리 기호
+    if(!matched && /글머리|불릿|블릿|bullet|항목\s*기호/i.test(clause)){
+      const map = [
+        [/하이픈|대시|["'`]?-["'`]?/, '-', '하이픈 -'],
+        [/가운뎃점|중간점|점불릿|·/, '·', '가운뎃점 ·'],
+        [/흰\s*불릿|◦/, '◦', '흰 불릿 ◦'],
+        [/불릿|•/, '•', '불릿 •'],
+        [/원래|그대로|유지/, 'keep', '원래 기호 유지'],
+      ];
+      for(const [re, val, name] of map){
+        if(re.test(clause)){
+          actions.push({ label:`글머리 기호 → ${name}`, apply(){ settings.bulletChar=val; } });
+          matched = true;
+          break;
+        }
+      }
+    }
+
+    // 4) 구분선
+    if(!matched && /구분선|가로선|---/.test(clause)){
+      if(/없애|제거|삭제|빼/.test(clause)){
+        actions.push({ label:'구분선(---) 제거', apply(){ settings.hrMode='remove'; } });
+        matched = true;
+      } else if(/살려|유지|남겨|보존/.test(clause)){
+        actions.push({ label:'구분선(---) 유지', apply(){ settings.hrMode='keep'; } });
+        matched = true;
+      }
+    }
+
+    // 5) 강조 처리
+    if(!matched && /강조|굵은|굵게|볼드|bold|\*\*/i.test(clause)){
+      if(/작은\s*따옴표|홑따옴표|외따옴표/.test(clause)){
+        actions.push({ label:"강조 → 작은따옴표 '강조'", apply(){ settings.emphStyle='quoteSingle'; } });
+        matched = true;
+      } else if(/큰\s*따옴표|쌍따옴표/.test(clause)){
+        actions.push({ label:'강조 → 큰따옴표 "강조"', apply(){ settings.emphStyle='quoteDouble'; } });
+        matched = true;
+      } else if(/없애|제거|빼/.test(clause)){
+        actions.push({ label:'강조 마커 제거(플레인)', apply(){ settings.emphStyle='remove'; } });
+        matched = true;
+      } else if(/유지|그대로/.test(clause)){
+        actions.push({ label:'강조 그대로 유지', apply(){ settings.emphStyle='keep'; } });
+        matched = true;
+      }
+    }
+
+    // 6) 출처
+    if(!matched && /출처|인용|레퍼런스|참고\s*링크/.test(clause)){
+      if(/없애|제거|삭제|빼/.test(clause)){
+        actions.push({ label:'출처 링크 제거 켬', apply(){ settings.removeCitations=true; } });
+        matched = true;
+      } else if(/살려|유지|남겨/.test(clause)){
+        actions.push({ label:'출처 링크 유지', apply(){ settings.removeCitations=false; } });
+        matched = true;
+      }
+    }
+
+    // 7) 제목 스타일
+    if(!matched && /제목|소제목/.test(clause) && !/줄/.test(clause)){
+      if(/대괄호/.test(clause)){
+        actions.push({ label:'제목 → [대괄호]', apply(){ settings.headingMode='bracket'; } });
+        matched = true;
+      } else if(/기호|■/.test(clause)){
+        actions.push({ label:'제목 → ■ 기호', apply(){ settings.headingMode='prefix'; } });
+        matched = true;
+      } else if(/텍스트만|글자만/.test(clause)){
+        actions.push({ label:'제목 → 텍스트만', apply(){ settings.headingMode='strip'; } });
+        matched = true;
+      }
+    }
+
+    // 8) A를 B로 바꿔 (치환)
+    if(!matched){
+      m = clause.match(/['"“”‘’]([^'"“”‘’]+)['"“”‘’]\s*(?:을|를)?\s*['"“”‘’]([^'"“”‘’]+)['"“”‘’]\s*(?:으로|로)\s*(?:모두\s*|전부\s*|다\s*)?(?:바꿔|바꾸|치환|교체|변경)/) ||
+          clause.match(/([^\s'"“”‘’]+)\s*(?:을|를)\s*([^\s'"“”‘’]+)\s*(?:으로|로)\s*(?:모두\s*|전부\s*|다\s*)?(?:바꿔|바꾸|치환|교체|변경)/);
+      if(m){
+        const find = m[1], repl = m[2];
+        const always = /항상|앞으로|매번|자동/.test(clause);
+        actions.push({ label:`"${find}" → "${repl}" 바꾸기` + (always ? ' (자동 규칙 저장)' : ''),
+          apply(){
+            const n = getNote(currentId);
+            if(n && n.body.includes(find)){
+              n.history = n.history || [];
+              n.history.push(n.body);
+              if(n.history.length>30) n.history.shift();
+              n.body = n.body.split(find).join(repl);
+              n.updatedAt = Date.now();
+            }
+            if(always) settings.customRules.push({ find, replace: repl, regex: false });
+          } });
+        matched = true;
+      }
+    }
+
+    if(!matched) unknown.push(clause);
+  }
+  return {actions, unknown};
+}
+
+$('btnWizard').addEventListener('click', ()=>{
+  if(!getNote(currentId)) return;
+  $('wizInput').value='';
+  $('wizResult').innerHTML='';
+  $('wizardOverlay').classList.add('open');
+  setTimeout(()=>$('wizInput').focus(), 60);
+});
+$('btnWizardGo').addEventListener('click', ()=>{
+  const {actions, unknown} = parseWizard($('wizInput').value);
+  const box = $('wizResult');
+  box.innerHTML='';
+  if(!actions.length && !unknown.length){ toast('지시 내용을 입력하세요'); return; }
+  for(const a of actions){
+    try{ a.apply(); }catch(e){}
+    const d = document.createElement('div');
+    d.className='report-line';
+    d.textContent = '적용됨 · ' + a.label;
+    box.appendChild(d);
+  }
+  if(actions.length){
+    saveSettings();
+    persist();
+    if(getNote(currentId)) openNote(currentId);
+    $('wizardOverlay').classList.add('open'); // openNote 후에도 모달 유지
+  }
+  for(const u of unknown){
+    const d = document.createElement('div');
+    d.className='warn-line';
+    d.textContent = '규칙으로 해석 불가 · ' + u;
+    box.appendChild(d);
+  }
+  if(actions.length){
+    const hint = document.createElement('div');
+    hint.className='set-note';
+    hint.textContent = '설정이 저장되었습니다. "정리"를 실행하면 새 규칙이 반영됩니다.';
+    box.appendChild(hint);
+  }
+  if(unknown.length){
+    if(settings.aiKey){
+      const btn = document.createElement('button');
+      btn.className='btn btn-primary';
+      btn.style.cssText='width:100%;margin-top:8px';
+      btn.textContent='해석 불가 명령을 AI로 실행';
+      btn.addEventListener('click', ()=>runWizardAi(unknown.join('. '), btn));
+      box.appendChild(btn);
+    }else{
+      const d = document.createElement('div');
+      d.className='set-note';
+      d.textContent='설정 → "AI 마법사 연결"에 API 키를 넣으면 이런 자유 편집 명령도 처리할 수 있습니다.';
+      box.appendChild(d);
+    }
+  }
+});
+
+/* ---- AI 마법사 2층: 자유 편집 (API 키 필요) ---- */
+const AI_SYS = '너는 텍스트 편집 도구다. 사용자의 지시대로만 본문을 편집한다. 규칙: 숫자·날짜·통화·퍼센트·고유명사·URL은 절대 바꾸지 않는다. 요청하지 않은 사실을 추가하지 않고, 요청하지 않은 내용을 삭제하지 않는다. 입력 언어를 유지한다. 결과 본문만 출력하고 설명·인사·코드펜스는 붙이지 않는다.';
+
+async function aiEditCall(instruction, body){
+  const model = settings.aiModel || 'gemini-2.5-flash-lite';
+  const user = '[지시]\n' + instruction + '\n\n[본문]\n' + body;
+  if(model.indexOf('gemini') === 0){
+    const res = await fetch('https://generativelanguage.googleapis.com/v1beta/models/' + model + ':generateContent?key=' + encodeURIComponent(settings.aiKey), {
+      method:'POST',
+      headers:{'content-type':'application/json'},
+      body: JSON.stringify({
+        system_instruction:{ parts:[{ text: AI_SYS }] },
+        contents:[{ role:'user', parts:[{ text: user }] }]
+      })
+    });
+    if(!res.ok) throw new Error('API ' + res.status);
+    const j = await res.json();
+    const parts = (((j.candidates||[])[0]||{}).content||{}).parts || [];
+    return parts.map(p=>p.text||'').join('');
+  }
+  const res = await fetch('https://api.anthropic.com/v1/messages', {
+    method:'POST',
+    headers:{
+      'content-type':'application/json',
+      'x-api-key': settings.aiKey,
+      'anthropic-version':'2023-06-01',
+      'anthropic-dangerous-direct-browser-access':'true'
+    },
+    body: JSON.stringify({
+      model, max_tokens: 8000, system: AI_SYS,
+      messages:[{ role:'user', content: user }]
+    })
+  });
+  if(!res.ok) throw new Error('API ' + res.status);
+  const j = await res.json();
+  return ((j.content||[])[0]||{}).text || '';
+}
+
+function numberGuard(before, after){
+  const nums = (s)=> (s.match(/\d+(?:[.,]\d+)*%?/g)||[]);
+  const b = nums(before), a = new Set(nums(after));
+  const missing = b.filter(x=>!a.has(x));
+  return missing.length ? `주의: 원문의 숫자 ${b.length}개 중 ${missing.length}개가 결과에서 발견되지 않습니다 (${missing.slice(0,5).join(', ')}${missing.length>5?'…':''})` : '';
+}
+
+async function runWizardAi(instruction, btn){
+  const n = getNote(currentId); if(!n) return;
+  btn.disabled = true; btn.textContent = 'AI 편집 중…';
+  try{
+    let out = (await aiEditCall(instruction, n.body)).trim();
+    out = out.replace(/^```[a-z]*\n?/, '').replace(/\n?```$/, '');
+    if(!out){ throw new Error('빈 응답'); }
+    const box = $('wizResult');
+    const pre = document.createElement('pre');
+    pre.style.cssText='background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:12px;white-space:pre-wrap;word-break:break-word;max-height:32dvh;overflow-y:auto;font-family:inherit;font-size:13.5px;line-height:1.6;margin-top:8px';
+    pre.textContent = out;
+    box.appendChild(pre);
+    const guard = numberGuard(n.body, out);
+    if(guard){
+      const w = document.createElement('div');
+      w.className='warn-line';
+      w.textContent = guard;
+      box.appendChild(w);
+    }
+    const ap = document.createElement('button');
+    ap.className='btn btn-primary';
+    ap.style.cssText='width:100%;margin-top:8px';
+    ap.textContent='AI 결과 적용';
+    ap.addEventListener('click', ()=>{
+      n.history = n.history || [];
+      n.history.push(n.body);
+      if(n.history.length>30) n.history.shift();
+      n.body = out;
+      n.updatedAt = Date.now();
+      persist();
+      openNote(n.id);
+      $('wizardOverlay').classList.remove('open');
+      toast('AI 편집을 적용했습니다 — 되돌리기로 복구 가능');
+    });
+    box.appendChild(ap);
+    btn.remove();
+  }catch(e){
+    toast('AI 호출 실패: ' + e.message);
+    btn.disabled = false;
+    btn.textContent = '해석 불가 명령을 AI로 실행';
+  }
+}
 
 /* ---------------- 표 도구 ---------------- */
 $('btnTable').addEventListener('click', ()=>{
