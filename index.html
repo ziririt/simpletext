@@ -871,8 +871,9 @@
         if (bc === 'keep') {
           out.push(ind + m[1] + m[2] + ' ' + inlineClean(m[3], o, rep));
         } else {
+          // 변환 시 원본 들여쓰기는 버리고 설정 들여쓰기만 적용 (누적 방지)
           rep.markers++;
-          out.push(ind + m[1] + bc + ' ' + inlineClean(m[3], o, rep));
+          out.push(ind + bc + ' ' + inlineClean(m[3], o, rep));
         }
       } else if ((m = line.match(/^(\s*)(\d+)([.)])\s+(.*)$/))) {
         out.push(m[1] + m[2] + '. ' + inlineClean(m[4], o, rep));
