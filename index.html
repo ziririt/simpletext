@@ -65,6 +65,11 @@
   .editor-wrap{flex:1; overflow:hidden; display:flex; flex-direction:column}
   .editor{flex:1; width:100%; resize:none; padding:10px 18px 18px; font-size:15px; line-height:1.7;
     font-family:inherit; overflow-y:auto}
+  .preview-view{flex:1; width:100%; padding:10px 18px 18px; font-size:15px; line-height:1.7; overflow-y:auto}
+  .preview-view .para{white-space:pre-wrap; word-break:break-word}
+  .preview-view .mono-table{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,"Nanum Gothic Coding","D2Coding",monospace;
+    white-space:pre; overflow-x:auto; font-size:13px; line-height:1.55; background:var(--bg);
+    border:1px solid var(--line); border-radius:10px; padding:12px; margin:10px 0}
   .statusbar{display:flex; gap:14px; align-items:center; padding:6px 18px; border-top:1px solid var(--line);
     font-size:12px; color:var(--sub); flex-wrap:wrap}
   .statusbar .rep{color:var(--accent); font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:60%}
@@ -211,6 +216,7 @@
       <div class="ed-head">
         <button class="back" id="btnBack">목록</button>
         <input class="title-input" id="titleInput" placeholder="제목" autocomplete="off">
+        <button class="icon-btn" id="btnPreview">미리보기</button>
         <button class="icon-btn" id="btnPin">리스트 상단 고정</button>
         <button class="icon-btn" id="btnDelete">삭제</button>
       </div>
@@ -227,6 +233,7 @@
         <input id="tagsInput" placeholder="태그 (쉼표로 구분: 투자, 테슬라)" autocomplete="off">
       </div>
       <textarea class="editor" id="bodyInput" placeholder="여기에 붙여넣거나 입력하세요" spellcheck="false"></textarea>
+      <div class="preview-view" id="previewView" style="display:none"></div>
       <div class="statusbar">
         <span id="charCount">0자</span>
         <span id="saveState"></span>
@@ -749,22 +756,26 @@
     const pad = width - dispWidth(s);
     return pad > 0 ? s + ' '.repeat(pad) : s;
   }
-  // 열 구분선을 ":"로 하고 공백으로 컬럼 너비를 맞춘 정렬 텍스트 표
+  // 열 구분선을 ":"로 하고 공백으로 컬럼 너비를 맞춘 정렬 텍스트 표.
+  // 헤더 아래에는 "─┼─" 구분줄을 넣어 헤더와 데이터를 구분한다.
   function tableToAligned(t) {
-    const rows = [t.header, ...t.rows].map(r => r.map(flat));
+    const header = t.header.map(flat);
+    const dataRows = t.rows.map(r => r.map(flat));
     const cols = t.header.length;
     const widths = new Array(cols).fill(0);
-    for (const r of rows) {
+    for (const r of [header, ...dataRows]) {
       for (let i = 0; i < cols; i++) {
         const w = dispWidth(r[i] || '');
         if (w > widths[i]) widths[i] = w;
       }
     }
-    return rows.map(r => {
+    const fmtRow = (r) => {
       const cells = [];
       for (let i = 0; i < cols; i++) cells.push(padDisp(r[i] || '', widths[i]));
       return cells.join(' : ').replace(/\s+$/, ''); // 마지막 컬럼 뒤 공백 제거
-    }).join('\n');
+    };
+    const rule = widths.map(w => '─'.repeat(w)).join('─┼─'); // ┼가 각 ':' 자리에 정렬됨
+    return [fmtRow(header), rule, ...dataRows.map(fmtRow)].join('\n');
   }
   function flat(c) { return String(c).replace(/[\t\n\r]+/g, ' '); }
   function tableToTSV(t) {
@@ -1241,9 +1252,50 @@ function openNote(id){
   $('sourceSelect').value = n.source || '';
   $('tagsInput').value = (n.tags||[]).join(', ');
   $('lastReport').textContent = n.lastReport || '';
+  setPreview(false);
   document.body.classList.add('mobile-editor');
   updateStatus();
   renderList();
+}
+
+/* ---------------- 미리보기(표만 등폭 렌더) ---------------- */
+let previewOn = false;
+function renderPreview(text){
+  const esc = s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  const lines = String(text).split('\n');
+  const colCount = l => { const p = l.split(' : '); return p.length >= 2 ? p.length : 0; };
+  const isRule = l => l.trim() !== '' && /[─-]/.test(l) && /^[\s─\-┼|+]+$/.test(l);
+  const out = [];
+  let i = 0;
+  while(i < lines.length){
+    if(colCount(lines[i]) >= 2){
+      let j = i; const block = [];
+      while(j < lines.length && (colCount(lines[j]) >= 2 || isRule(lines[j]))){ block.push(lines[j]); j++; }
+      if(block.filter(l => colCount(l) >= 2).length >= 2){
+        out.push('<pre class="mono-table">' + esc(block.join('\n')) + '</pre>');
+        i = j; continue;
+      }
+    }
+    // 표가 아닌 구간: 다음 표 시작 전까지 한 문단으로 묶음
+    let j = i; const para = [];
+    do { para.push(lines[j]); j++; } while(j < lines.length && colCount(lines[j]) < 2);
+    out.push('<div class="para">' + esc(para.join('\n')) + '</div>');
+    i = j;
+  }
+  return out.join('');
+}
+function setPreview(on){
+  previewOn = !!on;
+  if(previewOn){
+    $('previewView').innerHTML = renderPreview($('bodyInput').value);
+    $('bodyInput').style.display = 'none';
+    $('previewView').style.display = 'block';
+    $('btnPreview').textContent = '편집';
+  } else {
+    $('previewView').style.display = 'none';
+    $('bodyInput').style.display = 'block';
+    $('btnPreview').textContent = '미리보기';
+  }
 }
 function closeEditorMobile(){
   document.body.classList.remove('mobile-editor');
@@ -1275,6 +1327,7 @@ function scheduleSave(){
 }
 $('titleInput').addEventListener('input', scheduleSave);
 $('bodyInput').addEventListener('input', scheduleSave);
+$('btnPreview').addEventListener('click', ()=> setPreview(!previewOn));
 $('sourceSelect').addEventListener('change', scheduleSave);
 $('tagsInput').addEventListener('input', scheduleSave);
 $('btnBack').addEventListener('click', closeEditorMobile);
