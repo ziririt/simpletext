@@ -724,6 +724,48 @@
     const sep = t.aligns.map(a => a === 'center' ? ':---:' : a === 'right' ? '---:' : '---');
     return [rowToMd(t.header), rowToMd(sep), ...t.rows.map(rowToMd)].join('\n');
   }
+  // 표시폭: 한글·CJK·전각·이모지는 2칸, 그 외는 1칸으로 계산해 등폭 정렬에 사용
+  function dispWidth(s) {
+    let w = 0;
+    for (const ch of String(s)) {
+      const c = ch.codePointAt(0);
+      const wide = c >= 0x1100 && (
+        c <= 0x115F ||                                   // 한글 자모
+        c === 0x2329 || c === 0x232A ||
+        (c >= 0x2E80 && c <= 0xA4CF && c !== 0x303F) ||  // CJK 부수 ~ 이체자
+        (c >= 0xAC00 && c <= 0xD7A3) ||                  // 한글 음절
+        (c >= 0xF900 && c <= 0xFAFF) ||                  // CJK 호환 한자
+        (c >= 0xFE30 && c <= 0xFE4F) ||                  // CJK 호환 형식
+        (c >= 0xFF00 && c <= 0xFF60) ||                  // 전각 형식
+        (c >= 0xFFE0 && c <= 0xFFE6) ||
+        (c >= 0x1F300 && c <= 0x1FAFF) ||                // 이모지
+        (c >= 0x20000 && c <= 0x3FFFD)                   // CJK 확장 B+
+      );
+      w += wide ? 2 : 1;
+    }
+    return w;
+  }
+  function padDisp(s, width) {
+    const pad = width - dispWidth(s);
+    return pad > 0 ? s + ' '.repeat(pad) : s;
+  }
+  // 열 구분선을 ":"로 하고 공백으로 컬럼 너비를 맞춘 정렬 텍스트 표
+  function tableToAligned(t) {
+    const rows = [t.header, ...t.rows].map(r => r.map(flat));
+    const cols = t.header.length;
+    const widths = new Array(cols).fill(0);
+    for (const r of rows) {
+      for (let i = 0; i < cols; i++) {
+        const w = dispWidth(r[i] || '');
+        if (w > widths[i]) widths[i] = w;
+      }
+    }
+    return rows.map(r => {
+      const cells = [];
+      for (let i = 0; i < cols; i++) cells.push(padDisp(r[i] || '', widths[i]));
+      return cells.join(' : ').replace(/\s+$/, ''); // 마지막 컬럼 뒤 공백 제거
+    }).join('\n');
+  }
   function flat(c) { return String(c).replace(/[\t\n\r]+/g, ' '); }
   function tableToTSV(t) {
     return [t.header, ...t.rows].map(r => r.map(flat).join('\t')).join('\n');
@@ -895,7 +937,7 @@
           tablesOut.push(t);
           if (o.tablesOnly) { /* 본문 출력 안 함 */ }
           else if (o.tablesToTSV) out.push(tableToTSV(t));
-          else out.push(tableToMarkdown(t));
+          else out.push(tableToAligned(t));
         } else {
           for (let k = b.start; k <= b.end; k++) out.push(lines[k]);
         }
@@ -1072,7 +1114,7 @@
 
   const api = {
     tidy, PRESETS, extractTables,
-    tableToMarkdown, tableToTSV, tableToCSV, tableToHTML,
+    tableToMarkdown, tableToTSV, tableToCSV, tableToHTML, tableToAligned,
   };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else global.TidyEngine = api;
@@ -1839,6 +1881,7 @@ $('btnTable').addEventListener('click', ()=>{
     chips.className='chip-row';
     const acts = [
       ['스프레드시트용 복사', ()=>copyText(E.tableToTSV(t), '복사 완료 — 구글 시트나 엑셀 셀에 붙여넣으세요'), true],
+      ['정렬 텍스트 복사', ()=>copyText(E.tableToAligned(t), '정렬된 텍스트 표로 복사했습니다'), false],
       ['CSV 복사', ()=>copyText(E.tableToCSV(t), 'CSV로 복사했습니다'), false],
       ['Markdown 복사', ()=>copyText(E.tableToMarkdown(t), 'Markdown 표로 복사했습니다'), false],
       ['HTML 복사', ()=>copyText(E.tableToHTML(t), 'HTML 표로 복사했습니다'), false],
