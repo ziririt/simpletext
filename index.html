@@ -66,11 +66,6 @@
   .editor{flex:1; width:100%; resize:none; padding:10px 18px 18px; font-size:15px; line-height:1.7;
     font-family:inherit; overflow-y:auto}
   .editor.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,"Nanum Gothic Coding","D2Coding",monospace; font-size:13.5px; line-height:1.55}
-  .preview-view{flex:1; width:100%; padding:10px 18px 18px; font-size:15px; line-height:1.7; overflow-y:auto}
-  .preview-view .para{white-space:pre-wrap; word-break:break-word}
-  .preview-view .mono-table{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,"Nanum Gothic Coding","D2Coding",monospace;
-    white-space:pre; overflow-x:auto; font-size:13px; line-height:1.55; background:var(--bg);
-    border:1px solid var(--line); border-radius:10px; padding:12px; margin:10px 0}
   .statusbar{display:flex; gap:14px; align-items:center; padding:6px 18px; border-top:1px solid var(--line);
     font-size:12px; color:var(--sub); flex-wrap:wrap}
   .statusbar .rep{color:var(--accent); font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:60%}
@@ -217,7 +212,6 @@
       <div class="ed-head">
         <button class="back" id="btnBack">목록</button>
         <input class="title-input" id="titleInput" placeholder="제목" autocomplete="off">
-        <button class="icon-btn" id="btnPreview">미리보기</button>
         <button class="icon-btn" id="btnPin">리스트 상단 고정</button>
         <button class="icon-btn" id="btnDelete">삭제</button>
       </div>
@@ -234,7 +228,6 @@
         <input id="tagsInput" placeholder="태그 (쉼표로 구분: 투자, 테슬라)" autocomplete="off">
       </div>
       <textarea class="editor" id="bodyInput" placeholder="여기에 붙여넣거나 입력하세요" spellcheck="false"></textarea>
-      <div class="preview-view" id="previewView" style="display:none"></div>
       <div class="statusbar">
         <span id="charCount">0자</span>
         <span id="saveState"></span>
@@ -690,7 +683,7 @@
     return { header, aligns: new Array(colCount).fill('left'), rows, repaired: false };
   }
 
-  function detectTableBlocks(lines) {
+  function detectTableBlocks(lines, withRecords) {
     // 반환: [{start, end, kind}] (inclusive), 위치 보존
     const blocks = [];
     let i = 0;
@@ -711,11 +704,13 @@
     // 정렬 텍스트 표도 함께 인식 (파이프 블록과 겹치지 않는 구간만)
     const taken = new Set();
     for (const b of blocks) for (let k = b.start; k <= b.end; k++) taken.add(k);
-    for (const b of detectAlignedBlocks(lines)) {
-      let overlap = false;
-      for (let k = b.start; k <= b.end; k++) if (taken.has(k)) { overlap = true; break; }
-      if (!overlap) blocks.push(b);
-    }
+    const addIfFree = (b) => {
+      for (let k = b.start; k <= b.end; k++) if (taken.has(k)) return;
+      for (let k = b.start; k <= b.end; k++) taken.add(k);
+      blocks.push(b);
+    };
+    for (const b of detectAlignedBlocks(lines)) addIfFree(b);
+    if (withRecords) for (const b of detectRecordBlocks(lines)) addIfFree(b);
     blocks.sort((a, b) => a.start - b.start);
     return blocks;
   }
@@ -845,6 +840,100 @@
     const total = widths.reduce((a, b) => a + b, 0) + GAP.length * (cols - 1);
     const rule = '─'.repeat(total); // 헤더와 데이터를 나누는 가로 구분선
     return [fmtRow(header), rule, ...dataRows.map(fmtRow)].join('\n');
+  }
+
+  /* --------- 넓은 표: 행 단위 풀어쓰기 (record view) ---------
+   * 칸 맞추기는 셀에 문장이 들어가는 순간 화면 밖으로 나가 줄이 접히고, 접히면 정렬이
+   * 통째로 깨진다. 그래서 넓은 표는 한 행을 한 덩어리로 눕힌다.
+   * (DB 도구의 세로 출력 — MySQL \G, psql \x — 과 같은 해법)
+   * 첫 칸은 제목 줄, 나머지 칸은 "이름 : 값" 글머리. 사용자 확정 형식(2026-08-12). */
+  const WIDE_TOTAL = 42; // 폰 화면에서 등폭으로 무리 없이 읽히는 한계
+  const WIDE_CELL = 25;  // 한 칸에 문장이 들어왔다고 볼 기준
+  function alignedWidths(t) {
+    const cells = [t.header, ...t.rows];
+    const cols = t.header.length;
+    const widths = new Array(cols).fill(0);
+    for (const r of cells) {
+      for (let i = 0; i < cols; i++) {
+        const w = dispWidth(flat(r[i] || '').replace(/ {2,}/g, ' '));
+        if (w > widths[i]) widths[i] = w;
+      }
+    }
+    return widths;
+  }
+  function tableIsWide(t) {
+    const widths = alignedWidths(t);
+    const total = widths.reduce((a, b) => a + b, 0) + 2 * (widths.length - 1);
+    return total > WIDE_TOTAL || widths.some(w => w > WIDE_CELL);
+  }
+  function recordBullet(o) {
+    const b = o && o.bulletChar && o.bulletChar !== 'keep' ? o.bulletChar : '-';
+    // 들여쓰기는 사용자 글머리 설정을 그대로 따른다. 여기서 임의로 최소값을 강제하면
+    // 재정리 때 글머리 규칙이 다시 들여쓰기를 바꿔 결과가 계속 달라진다(멱등성 깨짐).
+    const n = o && typeof o.bulletIndent === 'number' ? o.bulletIndent : 2;
+    return { mark: b, pad: ' '.repeat(n) };
+  }
+  function tableToRecords(t, o) {
+    const { mark, pad } = recordBullet(o);
+    const names = t.header.map(c => flat(c).trim());
+    const blocks = [];
+    for (const r of t.rows) {
+      const key = flat(r[0] || '').trim();
+      const lines = [key || '-'];
+      for (let i = 1; i < names.length; i++) {
+        const v = flat(r[i] || '').trim();
+        if (!v) continue; // 빈 칸은 줄을 만들지 않는다
+        lines.push(`${pad}${mark} ${names[i]} : ${v}`);
+      }
+      blocks.push(lines.join('\n'));
+    }
+    return blocks.join('\n\n');
+  }
+
+  /* 풀어쓴 표를 다시 표로 되읽기 — 스프레드시트 변환용.
+   * 오탐이 본문을 망치지 않도록 표 도구(extractTables)에서만 켠다(o.detectRecords). */
+  function recordFieldOf(line) {
+    const m = /^\s*[-*·•◦]\s+(.+?)\s+:\s+(.+)$/.exec(line);
+    return m ? { name: m[1].trim(), value: m[2].trim() } : null;
+  }
+  function detectRecordBlocks(lines) {
+    const groups = [];
+    let i = 0;
+    while (i < lines.length) {
+      const head = lines[i];
+      if (head.trim() === '' || /^\s/.test(head) || recordFieldOf(head)) { i++; continue; }
+      let j = i + 1;
+      const fields = [];
+      while (j < lines.length) {
+        const f = recordFieldOf(lines[j]);
+        if (!f) break;
+        fields.push(f); j++;
+      }
+      if (fields.length) { groups.push({ start: i, end: j - 1, key: head.trim(), fields }); i = j; }
+      else i++;
+    }
+    // 같은 항목 이름을 가진 덩어리가 2개 이상 이어질 때만 표로 본다
+    const blocks = [];
+    let s = 0;
+    while (s < groups.length) {
+      const sig = groups[s].fields.map(f => f.name).join('');
+      let e = s;
+      while (e + 1 < groups.length &&
+             groups[e + 1].fields.map(f => f.name).join('') === sig) e++;
+      if (e > s) blocks.push({ start: groups[s].start, end: groups[e].end, kind: 'record', groups: groups.slice(s, e + 1) });
+      s = e + 1;
+    }
+    return blocks;
+  }
+  function recordBlockToTable(b) {
+    const names = b.groups[0].fields.map(f => f.name);
+    // 첫 칸 이름은 풀어쓰기에 남지 않는다(사용자 확정 [A]) — 빈 제목으로 둔다
+    const header = [''].concat(names);
+    const rows = b.groups.map(g => [g.key].concat(names.map(n => {
+      const f = g.fields.find(x => x.name === n);
+      return f ? f.value : '';
+    })));
+    return { header, aligns: new Array(header.length).fill('left'), rows, repaired: false };
   }
   function flat(c) { return String(c).replace(/[\t\n\r]+/g, ' '); }
   function tableToTSV(t) {
@@ -997,7 +1086,7 @@
         out.push('');
       }
     };
-    const tableBlocks = detectTableBlocks(lines);
+    const tableBlocks = detectTableBlocks(lines, !!o.detectRecords);
     const inTable = new Map();
     tableBlocks.forEach((b, bi) => { for (let k = b.start; k <= b.end; k++) inTable.set(k, bi); });
     const cellClean = (c) => inlineClean(c, o, rep);
@@ -1013,8 +1102,8 @@
           const w = [];
           const blockLines = lines.slice(b.start, b.end + 1);
           let t;
-          if (b.kind === 'aligned') {
-            const a = parseAlignedTable(blockLines);
+          if (b.kind === 'aligned' || b.kind === 'record') {
+            const a = b.kind === 'record' ? recordBlockToTable(b) : parseAlignedTable(blockLines);
             t = { header: a.header.map(cellClean), aligns: a.aligns,
                   rows: a.rows.map(r => r.map(cellClean)), repaired: false };
           } else {
@@ -1025,7 +1114,10 @@
           tablesOut.push(t);
           if (o.tablesOnly) { /* 본문 출력 안 함 */ }
           else if (o.tablesToTSV) out.push(tableToTSV(t));
-          else out.push(tableToAligned(t));
+          // 좁은 표는 칸 맞추기, 넓거나 문장이 든 표는 행 단위 풀어쓰기 (자동 판단)
+          else if (o.wideTables !== 'aligned' && (o.wideTables === 'records' || tableIsWide(t))) {
+            out.push(tableToRecords(t, o));
+          } else out.push(tableToAligned(t));
         } else {
           for (let k = b.start; k <= b.end; k++) out.push(lines[k]);
         }
@@ -1196,7 +1288,8 @@
 
   /* 문서에서 표만 추출 (표 도구용) */
   function extractTables(raw) {
-    const r = tidy(raw, { tablesOnly: true, repairTables: true, removeOuterFence: true });
+    // detectRecords: 풀어쓴 표도 스프레드시트로 되돌릴 수 있도록 표 도구에서만 인식
+    const r = tidy(raw, { tablesOnly: true, repairTables: true, removeOuterFence: true, detectRecords: true });
     return { tables: r.tables, warnings: r.warnings };
   }
 
@@ -1329,60 +1422,11 @@ function openNote(id){
   $('sourceSelect').value = n.source || '';
   $('tagsInput').value = (n.tags||[]).join(', ');
   $('lastReport').textContent = n.lastReport || '';
-  setPreview(false);
   document.body.classList.add('mobile-editor');
   updateStatus();
   renderList();
 }
 
-/* ---------------- 미리보기(표만 등폭 렌더) ---------------- */
-let previewOn = false;
-function renderPreview(text){
-  const esc = s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-  const lines = String(text).split('\n');
-  // 표는 박스드로잉 가로 구분선(─────)으로만 식별한다.
-  // ASCII '---'(마크다운 구분선)은 제외해 오탐을 막는다.
-  const isRule = l => /^[─\s┼]+$/.test(l) && (l.match(/─/g) || []).length >= 3;
-  const out = [];
-  let para = [];
-  const flushPara = () => { if(para.length){ out.push('<div class="para">' + esc(para.join('\n')) + '</div>'); para = []; } };
-  let i = 0;
-  while(i < lines.length){
-    if(isRule(lines[i])){
-      // 바로 위의 비어있지 않은 줄을 헤더로 사용
-      let header = null;
-      if(para.length && para[para.length-1].trim() !== '') header = para.pop();
-      flushPara();
-      const block = [];
-      if(header !== null) block.push(header);
-      block.push(lines[i]);
-      let j = i + 1;
-      while(j < lines.length && lines[j].trim() !== ''){ block.push(lines[j]); j++; }
-      if(header !== null && j > i + 1){
-        out.push('<pre class="mono-table">' + esc(block.join('\n')) + '</pre>');
-      } else {
-        out.push('<div class="para">' + esc(block.join('\n')) + '</div>');
-      }
-      i = j; continue;
-    }
-    para.push(lines[i]); i++;
-  }
-  flushPara();
-  return out.join('');
-}
-function setPreview(on){
-  previewOn = !!on;
-  if(previewOn){
-    $('previewView').innerHTML = renderPreview($('bodyInput').value);
-    $('bodyInput').style.display = 'none';
-    $('previewView').style.display = 'block';
-    $('btnPreview').textContent = '편집';
-  } else {
-    $('previewView').style.display = 'none';
-    $('bodyInput').style.display = 'block';
-    $('btnPreview').textContent = '미리보기';
-  }
-}
 function closeEditorMobile(){
   document.body.classList.remove('mobile-editor');
   renderList();
@@ -1413,7 +1457,6 @@ function scheduleSave(){
 }
 $('titleInput').addEventListener('input', scheduleSave);
 $('bodyInput').addEventListener('input', scheduleSave);
-$('btnPreview').addEventListener('click', ()=> setPreview(!previewOn));
 $('sourceSelect').addEventListener('change', scheduleSave);
 $('tagsInput').addEventListener('input', scheduleSave);
 $('btnBack').addEventListener('click', closeEditorMobile);
