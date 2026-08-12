@@ -451,6 +451,7 @@
         <div id="ruleList"></div>
         <button class="btn btn-ghost" id="btnAddRule" style="width:100%;margin-top:6px;padding:9px">규칙 추가</button>
       </div>
+      <div class="set-note" id="verNote" style="text-align:center;font-weight:600"></div>
       <div class="set-note">
         설정은 저장 즉시 반영되며, 이후 "정리"를 실행할 때부터 적용됩니다.
         이미 정리해 둔 메모는 소급해서 바뀌지 않습니다. 원본이 필요하면 되돌리기를 사용하세요.
@@ -1306,6 +1307,9 @@
 (function(){
 'use strict';
 const E = window.TidyEngine;
+// 버전 — 앱(lib/version.dart)과 같은 값을 쓴다. 업데이트가 실제로 반영됐는지
+// 이 숫자로 확인한다(소유자 요청 2026-08-12). 설정 화면 맨 아래에 표시.
+const APP_VERSION = 'ver.0.1.1.1';
 const LS_KEY = 'simpletext.notes.v1';
 const $ = (id) => document.getElementById(id);
 
@@ -2196,6 +2200,7 @@ $('searchInput').addEventListener('input', renderList);
 
 /* ---------------- 시작 ---------------- */
 applyMono();
+$('verNote').textContent = APP_VERSION;
 renderPresets();
 renderList();
 persist();
