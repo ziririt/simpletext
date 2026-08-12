@@ -1367,13 +1367,17 @@ function newNote(body, title){
 function getNote(id){ return notes.find(n=>n.id===id); }
 
 /* ---------------- 목록 렌더 ---------------- */
+// 목록 날짜 — 애플 메모장 방식: 오늘은 시각만, 어제는 "어제", 그 외는 날짜.
+// (Flutter 앱의 _listDate와 같은 규칙으로 맞췄다 — 두 앱이 다르게 보이면 안 된다)
 function fmtDate(ts){
   const d = new Date(ts);
   const p = (x)=>String(x).padStart(2,'0');
   const now = new Date();
-  const isToday = d.getFullYear()===now.getFullYear() && d.getMonth()===now.getMonth() && d.getDate()===now.getDate();
-  if(isToday) return `오늘 ${p(d.getHours())}:${p(d.getMinutes())}`;
-  return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+  const day = (x)=>new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
+  const diff = Math.round((day(now) - day(d)) / 86400000);
+  if(diff === 0) return `${p(d.getHours())}:${p(d.getMinutes())}`;
+  if(diff === 1) return '어제';
+  return `${d.getFullYear()}. ${d.getMonth()+1}. ${d.getDate()}.`;
 }
 function renderList(){
   const q = $('searchInput').value.trim().toLowerCase();
