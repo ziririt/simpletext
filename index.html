@@ -643,8 +643,55 @@
     return cells.length > 0 && cells.every(c => /^:?-{1,}:?$/.test(c) && c.replace(/:/g, '').length >= 1);
   }
 
+  /* --------- 정렬 텍스트 표 되읽기 (round-trip) ---------
+   * 2026-08-12 — tableToAligned가 만든 공백 정렬 표를 다시 표로 인식한다.
+   * 이게 없으면 "정리" 직후 표 도구가 표를 못 찾아 스프레드시트 복사가 끊긴다
+   * (실제로 그 상태로 한 번 배포됐다). 엔진이 만든 형식은 엔진이 되읽을 수 있어야 한다.
+   * 셀 안에는 연속 공백이 없도록 생성하므로(alignCell), 2칸 이상 공백 = 열 구분자. */
+  function isAlignedRule(line) {
+    return /^─{3,}$/.test(line.trim());
+  }
+  function splitAlignedCells(line) {
+    return line.trim().split(/ {2,}/).map(c => c.trim());
+  }
+  function detectAlignedBlocks(lines) {
+    // 헤더줄 + ─── 구분선 + 데이터줄(빈 줄 전까지)
+    const blocks = [];
+    for (let i = 1; i < lines.length; i++) {
+      if (!isAlignedRule(lines[i])) continue;
+      const header = lines[i - 1];
+      if (!header || header.trim() === '' || splitAlignedCells(header).length < 2) continue;
+      let j = i + 1;
+      while (j < lines.length && lines[j].trim() !== '') j++;
+      const dataCount = j - (i + 1);
+      if (dataCount < 1) continue;
+      // 데이터 줄 중 하나 이상이 2열 이상이어야 표로 본다(─ 장식선 오탐 방지)
+      let multi = 0;
+      for (let k = i + 1; k < j; k++) if (splitAlignedCells(lines[k]).length >= 2) multi++;
+      if (multi < 1) continue;
+      blocks.push({ start: i - 1, end: j - 1, kind: 'aligned' });
+      i = j;
+    }
+    return blocks;
+  }
+  function parseAlignedTable(lines) {
+    const header = splitAlignedCells(lines[0]);
+    const colCount = header.length;
+    const rows = [];
+    for (let k = 2; k < lines.length; k++) {
+      if (lines[k].trim() === '') continue;
+      let cells = splitAlignedCells(lines[k]);
+      if (cells.length > colCount) {
+        cells = cells.slice(0, colCount - 1).concat([cells.slice(colCount - 1).join(' ')]);
+      }
+      while (cells.length < colCount) cells.push('');
+      rows.push(cells);
+    }
+    return { header, aligns: new Array(colCount).fill('left'), rows, repaired: false };
+  }
+
   function detectTableBlocks(lines) {
-    // 반환: [{start, end}] (inclusive), 위치 보존
+    // 반환: [{start, end, kind}] (inclusive), 위치 보존
     const blocks = [];
     let i = 0;
     while (i < lines.length) {
@@ -656,11 +703,20 @@
           // prose 오탐 방지: 행 과반이 2셀 이상이어야 함
           let multi = 0;
           for (let k = i; k <= j; k++) if (splitCells(lines[k]).length >= 2) multi++;
-          if (multi >= Math.max(2, Math.ceil(rowCount * 0.6))) blocks.push({ start: i, end: j });
+          if (multi >= Math.max(2, Math.ceil(rowCount * 0.6))) blocks.push({ start: i, end: j, kind: 'pipe' });
         }
         i = j + 1;
       } else i++;
     }
+    // 정렬 텍스트 표도 함께 인식 (파이프 블록과 겹치지 않는 구간만)
+    const taken = new Set();
+    for (const b of blocks) for (let k = b.start; k <= b.end; k++) taken.add(k);
+    for (const b of detectAlignedBlocks(lines)) {
+      let overlap = false;
+      for (let k = b.start; k <= b.end; k++) if (taken.has(k)) { overlap = true; break; }
+      if (!overlap) blocks.push(b);
+    }
+    blocks.sort((a, b) => a.start - b.start);
     return blocks;
   }
 
@@ -768,8 +824,11 @@
   // 헤더 아래에 가로 구분선(─────)을 넣은 정렬 텍스트 표.
   function tableToAligned(t) {
     const GAP = '  '; // 열 사이 간격(공백 2칸)
-    const header = t.header.map(flat);
-    const dataRows = t.rows.map(r => r.map(flat));
+    // 셀 안의 연속 공백은 1칸으로 줄인다 — 그래야 "2칸 이상 = 열 구분자"가 성립해
+    // 되읽기(parseAlignedTable)가 셀 내용과 구분자를 헷갈리지 않는다.
+    const alignCell = (c) => flat(c).replace(/ {2,}/g, ' ');
+    const header = t.header.map(alignCell);
+    const dataRows = t.rows.map(r => r.map(alignCell));
     const cols = t.header.length;
     const widths = new Array(cols).fill(0);
     for (const r of [header, ...dataRows]) {
@@ -952,7 +1011,15 @@
         const b = tableBlocks[bi];
         if (o.repairTables || o.tablesOnly || o.tablesToTSV) {
           const w = [];
-          const t = parseTable(lines.slice(b.start, b.end + 1), w, cellClean);
+          const blockLines = lines.slice(b.start, b.end + 1);
+          let t;
+          if (b.kind === 'aligned') {
+            const a = parseAlignedTable(blockLines);
+            t = { header: a.header.map(cellClean), aligns: a.aligns,
+                  rows: a.rows.map(r => r.map(cellClean)), repaired: false };
+          } else {
+            t = parseTable(blockLines, w, cellClean);
+          }
           warnings.push(...w);
           if (t.repaired || w.length) rep.tablesRepaired++;
           tablesOut.push(t);
