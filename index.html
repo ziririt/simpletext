@@ -637,6 +637,41 @@
     return cells.length > 0 && cells.every(c => /^:?-{1,}:?$/.test(c) && c.replace(/:/g, '').length >= 1);
   }
 
+  /* --------- 탭으로 구분된 표 (ChatGPT·클로드 앱에서 복사하면 이렇게 온다) ---------
+   * 2026-08-12 — 실제 사용 중 발견. 앱에서 렌더된 표를 복사하면 마크다운 파이프가
+   * 아니라 탭으로 넘어온다. 탐지가 '|'와 '─'만 보고 있어서 표를 통째로 놓쳤고,
+   * 사용자 화면에서 표가 줄글로 뭉개졌다. 붙여넣기의 가장 흔한 경로라 반드시 잡아야 한다. */
+  function splitTsvCells(line) {
+    return line.split('\t').map(c => c.trim());
+  }
+  function detectTsvBlocks(lines) {
+    const blocks = [];
+    let i = 0;
+    while (i < lines.length) {
+      const cells = lines[i].includes('\t') ? splitTsvCells(lines[i]) : [];
+      if (cells.filter(c => c !== '').length >= 2) {
+        let j = i;
+        while (j + 1 < lines.length && lines[j + 1].includes('\t') && lines[j + 1].trim() !== '') j++;
+        // 한 줄짜리는 표로 보지 않는다(들여쓰기용 탭 한 줄 등 오탐 방지)
+        if (j > i) blocks.push({ start: i, end: j, kind: 'tsv' });
+        i = j + 1;
+      } else i++;
+    }
+    return blocks;
+  }
+  function parseTsvTable(lines) {
+    const rows = lines.map(splitTsvCells);
+    let colCount = 0;
+    for (const r of rows) if (r.length > colCount) colCount = r.length;
+    const fit = (r) => {
+      const c = r.slice(0, colCount);
+      while (c.length < colCount) c.push('');
+      return c;
+    };
+    return { header: fit(rows[0]), aligns: new Array(colCount).fill('left'),
+             rows: rows.slice(1).map(fit), repaired: false };
+  }
+
   /* --------- 정렬 텍스트 표 되읽기 (round-trip) ---------
    * 2026-08-12 — tableToAligned가 만든 공백 정렬 표를 다시 표로 인식한다.
    * 이게 없으면 "정리" 직후 표 도구가 표를 못 찾아 스프레드시트 복사가 끊긴다
@@ -711,6 +746,7 @@
       blocks.push(b);
     };
     for (const b of detectAlignedBlocks(lines)) addIfFree(b);
+    for (const b of detectTsvBlocks(lines)) addIfFree(b);
     if (withRecords) for (const b of detectRecordBlocks(lines)) addIfFree(b);
     blocks.sort((a, b) => a.start - b.start);
     return blocks;
@@ -1103,8 +1139,10 @@
           const w = [];
           const blockLines = lines.slice(b.start, b.end + 1);
           let t;
-          if (b.kind === 'aligned' || b.kind === 'record') {
-            const a = b.kind === 'record' ? recordBlockToTable(b) : parseAlignedTable(blockLines);
+          if (b.kind === 'aligned' || b.kind === 'record' || b.kind === 'tsv') {
+            const a = b.kind === 'record' ? recordBlockToTable(b)
+                    : b.kind === 'tsv' ? parseTsvTable(blockLines)
+                    : parseAlignedTable(blockLines);
             t = { header: a.header.map(cellClean), aligns: a.aligns,
                   rows: a.rows.map(r => r.map(cellClean)), repaired: false };
           } else {
@@ -1309,7 +1347,7 @@
 const E = window.TidyEngine;
 // 버전 — 앱(lib/version.dart)과 같은 값을 쓴다. 업데이트가 실제로 반영됐는지
 // 이 숫자로 확인한다(소유자 요청 2026-08-12). 설정 화면 맨 아래에 표시.
-const APP_VERSION = 'ver.0.1.1.1';
+const APP_VERSION = 'ver.0.1.2.1';
 const LS_KEY = 'simpletext.notes.v1';
 const $ = (id) => document.getElementById(id);
 
