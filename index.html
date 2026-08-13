@@ -616,8 +616,45 @@
     return segs;
   }
 
+  /* ============ 05a. 출력 시각 머리글 제거 ============ */
+  // "2026-08-03(월) 13:58 KST" 처럼 답변 맨 위에 찍히는 시각 줄. 제목으로도
+  // 본문으로도 쓸모가 없어 지운다(소유자 요청 2026-08-14).
+  //
+  // 안전장치 — 아래 두 가지는 절대 건드리면 안 된다.
+  //   "2024~2025년"                     ← 사용자가 쓴 소제목
+  //   "2026년 7월 공지, 8월 20일 적용 예정" ← 날짜가 든 본문
+  // 그래서 (1) 문서 맨 위에서만 보고, (2) 줄 전체가 시각일 때만 지우고,
+  // (3) 시:분이 있거나 "출력 시각:" 같은 라벨이 붙어 있어야 한다.
+  const TS_LABEL = '(?:출력|생성|작성|기준|수정|업데이트|최종\\s*수정|발행|Generated|Created|Updated|Last\\s+updated|As\\s+of)\\s*(?:시각|시간|일시|일자|일)?\\s*[:：\\-–—]\\s*';
+  const TS_DATE = '\\d{4}\\s*[-./년]\\s*\\d{1,2}\\s*[-./월]\\s*\\d{1,2}\\s*일?\\.?';
+  const TS_WD = '(?:\\s*[(（]\\s*(?:[월화수목금토일]|Mon|Tue|Wed|Thu|Fri|Sat|Sun)[a-z]*\\s*[)）])?';
+  const TS_TIME = '\\s*(?:오전|오후|AM|PM|am|pm)?\\s*\\d{1,2}\\s*[:시]\\s*\\d{2}(?:\\s*[:분]\\s*\\d{2})?\\s*초?\\s*(?:AM|PM|am|pm)?';
+  const TS_TZ = '(?:\\s*[(（]?\\s*(?:KST|UTC|GMT|JST|PST|PDT|EST|EDT|CST|CET)\\s*[+-]?\\d{0,2}(?::\\d{2})?\\s*[)）]?)?';
+  const TIME_HEADER = new RegExp('^(?:' + TS_LABEL + ')?' + TS_DATE + TS_WD + TS_TIME + TS_TZ + '\\.?$');
+  const TIME_HEADER_LABELED = new RegExp('^' + TS_LABEL + TS_DATE + TS_WD + TS_TZ + '\\.?$');
+
+  function isTimeHeader(line) {
+    const t = line.trim();
+    if (!t || t.length > 60) return false;
+    return TIME_HEADER.test(t) || TIME_HEADER_LABELED.test(t);
+  }
+
+  // 맨 위에 이어지는 시각 줄을 모두 지운다. 지운 개수를 돌려준다.
+  function stripTimeHeader(lines) {
+    let removed = 0;
+    for (;;) {
+      let i = 0;
+      while (i < lines.length && lines[i].trim() === '') i++;
+      if (i >= lines.length || !isTimeHeader(lines[i])) break;
+      lines.splice(0, i + 1);
+      while (lines.length && lines[0].trim() === '') lines.shift();
+      removed++;
+    }
+    return removed;
+  }
+
   /* ============ 05. AI Preamble Detection (보수적) ============ */
-  const PREAMBLE_START = /^(네[,.!\s]|넵[,.!\s]|물론(입니다|이죠|이에요)|알겠(습니다|어요)|안녕하세요|좋(습니다|아요)[,.!\s]|요청하신|말씀하신|아래는|다음은|정리해\s?드리|설명해\s?드리|도와드리|Sure[,.!\s]|Of course[,.!\s]|Certainly[,.!\s]|Absolutely[,.!\s]|Here('s| is| are)\b|Below (is|are)\b|I('|’)?ve\b|I('|’)?d be happy\b|Great question)/i;
+  const PREAMBLE_START =/^(네[,.!\s]|넵[,.!\s]|물론(입니다|이죠|이에요)|알겠(습니다|어요)|안녕하세요|좋(습니다|아요)[,.!\s]|요청하신|말씀하신|아래는|다음은|정리해\s?드리|설명해\s?드리|도와드리|Sure[,.!\s]|Of course[,.!\s]|Certainly[,.!\s]|Absolutely[,.!\s]|Here('s| is| are)\b|Below (is|are)\b|I('|’)?ve\b|I('|’)?d be happy\b|Great question)/i;
   const PREAMBLE_END = /(:|：|(습니다|입니다|드릴게요|드리겠습니다|볼게요|할게요|겠습니다)[.!]?|[.!?:])\s*$/;
 
   function detectPreamble(lines) {
@@ -1289,11 +1326,12 @@
     if (o.removePreamble) {
       const first = segs.find(s => s.type === 'text');
       if (first) {
+        rep.preamble += stripTimeHeader(first.lines);
         const idx = detectPreamble(first.lines);
         if (idx >= 0) {
           first.lines.splice(idx, 1);
           if (first.lines[idx] === '') first.lines.splice(idx, 1);
-          rep.preamble = 1;
+          rep.preamble += 1;
         }
       }
     }
@@ -1393,7 +1431,7 @@
 const E = window.TidyEngine;
 // 버전 — 앱(lib/version.dart)과 같은 값을 쓴다. 업데이트가 실제로 반영됐는지
 // 이 숫자로 확인한다(소유자 요청 2026-08-12). 설정 화면 맨 아래에 표시.
-const APP_VERSION = 'ver.0.1.6.1';
+const APP_VERSION = 'ver.0.1.7.1';
 const LS_KEY = 'simpletext.notes.v1';
 const $ = (id) => document.getElementById(id);
 
@@ -1745,13 +1783,16 @@ $('btnApply').addEventListener('click', ()=>{
   n.history.push(n.body);
   if(n.history.length>30) n.history.shift();
   if(!n.originalBody) n.originalBody = n.body;
+  // 제목은 "본문 맨 위 한 줄"이다(소유자 확정 2026-08-14).
+  // 정리하면서 맨 윗줄이 바뀔 수 있으므로(출력 시각 줄 제거 등) 다시 뽑는다.
+  // 단 사용자가 손으로 쓴 제목은 건드리지 않는다 — 정리 전 첫 줄과 같을 때만
+  // "자동으로 붙은 제목"으로 보고 갱신한다.
+  const firstOf = t => (String(t).split('\n').find(l=>l.trim())||'').slice(0,40);
+  const wasAuto = !n.title || n.title === firstOf(n.body);
   n.body = pending.result.text;
   n.lastReport = pending.result.summary;
   n.updatedAt = Date.now();
-  if(!n.title){
-    const fl = (n.body.split('\n').find(l=>l.trim())||'').slice(0,40);
-    n.title = fl;
-  }
+  if(wasAuto) n.title = firstOf(n.body);
   persist();
   $('previewOverlay').classList.remove('open');
   openNote(n.id);
