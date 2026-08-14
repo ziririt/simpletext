@@ -1145,7 +1145,15 @@
     if (o.smartPunct) {
       t = t.replace(/[“”]/g, '"').replace(/[‘’]/g, "'").replace(/[–—]/g, '-').replace(/…/g, '...');
     }
-    if (o.removeEmoji) t = t.replace(/ {2,}/g, ' ');
+    if (o.removeEmoji) {
+      t = t.replace(/ {2,}/g, ' ');
+      // 2026-08-14 — 줄 맨 앞에 있던 이모지를 지우면 그 뒤 공백 한 칸이 남는다.
+      // "✅ 완료"가 " 완료"가 된다. 바로 위 규칙은 두 칸 이상만 보기 때문에 못 잡는다.
+      // AI 답변은 줄 맨 앞에 이모지를 찍는 일이 흔해서 실사용에서 자주 밟히는 자리다.
+      // 줄 맨 앞만 깎는다 — 여기는 인라인 단계라 글머리 들여쓰기가 붙기 전이다.
+      // Dart(lib/core/tidy_engine.dart)에 같은 수정이 들어가 있다. 한쪽만 고치지 말 것.
+      t = t.replace(/^[ \t]+/gm, '');
+    }
     return t;
   }
 
@@ -1470,7 +1478,7 @@
 const E = window.TidyEngine;
 // 버전 — 앱(lib/version.dart)과 같은 값을 쓴다. 업데이트가 실제로 반영됐는지
 // 이 숫자로 확인한다(소유자 요청 2026-08-12). 설정 화면 맨 아래에 표시.
-const APP_VERSION = 'ver.0.1.9.1';
+const APP_VERSION = 'ver.0.2.2.1';
 const LS_KEY = 'simpletext.notes.v1';
 const $ = (id) => document.getElementById(id);
 
