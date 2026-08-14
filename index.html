@@ -639,13 +639,27 @@
     return TIME_HEADER.test(t) || TIME_HEADER_LABELED.test(t);
   }
 
-  // 맨 위에 이어지는 시각 줄을 모두 지운다. 지운 개수를 돌려준다.
-  function stripTimeHeader(lines) {
+  // 홀로 있는 구분선("---", "***", "═══" 등). 같은 기호만 3개 이상인 줄.
+  // 문서 맨 위·맨 아래에 있으면 내용이 없으므로 지운다(소유자 신고 2026-08-14:
+  // 맨 위 "---" 때문에 제목이 "---"로 붙었다). 문서 중간의 구분선은 글을 나누는
+  // 뜻이 있으므로 그대로 둔다.
+  function isLoneDivider(line) {
+    const c = line.trim().replace(/\s/g, '');
+    if (c.length < 3) return false;
+    if (!/^[-*_=─━═]+$/.test(c)) return false;
+    return new Set(c).size === 1; // 한 가지 기호로만 이루어질 것
+  }
+
+  // 문서 가장자리에서 지워도 되는 줄 — 출력 시각, 홀로 있는 구분선.
+  function isEdgeNoise(line) { return isTimeHeader(line) || isLoneDivider(line); }
+
+  // 맨 위에 이어지는 군더더기 줄을 모두 지운다. 지운 개수를 돌려준다.
+  function stripTopNoise(lines) {
     let removed = 0;
     for (;;) {
       let i = 0;
       while (i < lines.length && lines[i].trim() === '') i++;
-      if (i >= lines.length || !isTimeHeader(lines[i])) break;
+      if (i >= lines.length || !isEdgeNoise(lines[i])) break;
       lines.splice(0, i + 1);
       while (lines.length && lines[0].trim() === '') lines.shift();
       removed++;
@@ -654,18 +668,18 @@
   }
 
   // 맨 아래도 마찬가지. LLM은 출력 시각을 첫 줄 아니면 끝 줄에 찍는다
-  // (소유자 확인 2026-08-14). 문서 중간의 시각 표기는 본문 내용이므로 손대지 않는다.
+  // (소유자 확인 2026-08-14). 문서 중간의 시각·구분선은 내용이므로 손대지 않는다.
   //
   // skipCites: 끝에 출처 목록이 붙어 있으면 그 위를 본다. 출처는 어차피 곧
-  // 지워지므로, 출처 바로 위의 시각 줄도 사실상 '끝 줄'이다.
-  function stripTimeFooter(lines, skipCites) {
+  // 지워지므로, 출처 바로 위의 줄도 사실상 '끝 줄'이다.
+  function stripBottomNoise(lines, skipCites) {
     let removed = 0;
     for (;;) {
       let i = lines.length - 1;
       const skippable = (l) => l.trim() === '' ||
         (skipCites && (isCitationLine(l) || SOURCE_HEADING.test(l)));
       while (i >= 0 && skippable(lines[i])) i--;
-      if (i < 0 || !isTimeHeader(lines[i])) break;
+      if (i < 0 || !isEdgeNoise(lines[i])) break;
       lines.splice(i, 1);
       removed++;
     }
@@ -1346,17 +1360,19 @@
     if (o.removePreamble) {
       const first = segs.find(s => s.type === 'text');
       if (first) {
-        rep.preamble += stripTimeHeader(first.lines);
+        rep.preamble += stripTopNoise(first.lines);
         const idx = detectPreamble(first.lines);
         if (idx >= 0) {
           first.lines.splice(idx, 1);
           if (first.lines[idx] === '') first.lines.splice(idx, 1);
           rep.preamble += 1;
+          // 서두를 걷어내니 그 밑에 구분선이 드러나는 경우가 있다.
+          rep.preamble += stripTopNoise(first.lines);
         }
       }
-      // 끝 줄의 출력 시각도 지운다 — 마지막 text 조각에서만 본다.
+      // 끝 줄의 군더더기도 지운다 — 마지막 text 조각에서만 본다.
       const last = [...segs].reverse().find(s => s.type === 'text');
-      if (last) rep.preamble += stripTimeFooter(last.lines, o.removeCitations);
+      if (last) rep.preamble += stripBottomNoise(last.lines, o.removeCitations);
     }
 
     // 06 Escape Normalization (pipe 제외 — 표 파서에서 처리)
@@ -1454,7 +1470,7 @@
 const E = window.TidyEngine;
 // 버전 — 앱(lib/version.dart)과 같은 값을 쓴다. 업데이트가 실제로 반영됐는지
 // 이 숫자로 확인한다(소유자 요청 2026-08-12). 설정 화면 맨 아래에 표시.
-const APP_VERSION = 'ver.0.1.8.1';
+const APP_VERSION = 'ver.0.1.9.1';
 const LS_KEY = 'simpletext.notes.v1';
 const $ = (id) => document.getElementById(id);
 
